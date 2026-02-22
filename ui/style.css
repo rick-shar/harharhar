@@ -44,6 +44,75 @@ button:hover { background: #c73e54; }
 #clear-btn { background: #533483; }
 #clear-btn:hover { background: #3e2763; }
 
+/* Annotation bar */
+#annotate-bar {
+  display: flex;
+  padding: 6px 8px;
+  gap: 6px;
+  background: #16213e;
+  border-bottom: 1px solid #0f3460;
+}
+
+#annotate-input {
+  flex: 1;
+  padding: 4px 8px;
+  background: #1a1a2e;
+  border: 1px solid #333;
+  color: #999;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  outline: none;
+}
+#annotate-input:focus {
+  border-color: #533483;
+  color: #e0e0e0;
+}
+
+#annotate-btn {
+  padding: 4px 10px;
+  background: #533483;
+  font-size: 11px;
+}
+#annotate-btn:hover {
+  background: #6b44a8;
+}
+
+/* Feed controls */
+#feed-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: #16213e;
+  border-bottom: 1px solid #0f3460;
+}
+
+.toggle-btn {
+  padding: 3px 10px;
+  font-size: 10px;
+  background: #1a1a2e;
+  color: #666;
+  border: 1px solid #333;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.toggle-btn:hover {
+  border-color: #533483;
+  color: #aaa;
+}
+.toggle-btn.active {
+  background: #533483;
+  color: #e0e0e0;
+  border-color: #533483;
+}
+
+#feed-stats {
+  font-size: 10px;
+  color: #555;
+}
+
 /* App selector */
 #app-selector {
   display: none;

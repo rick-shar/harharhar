@@ -366,6 +366,29 @@ fn handle_command(app: &tauri::AppHandle, body: &str) -> String {
             exec_js_with_result(app, "(() => { const sockets = window.__hh_ws || []; return JSON.stringify(sockets.map((s,i) => ({index:i, url:s.url, state:['CONNECTING','OPEN','CLOSING','CLOSED'][s.readyState]}))); })()")
         }
 
+        "annotate" => {
+            let label = cmd.get("label").and_then(|v| v.as_str()).unwrap_or("");
+            if label.is_empty() {
+                return r#"{"error":"missing label"}"#.to_string();
+            }
+            let state = app.state::<crate::AppState>();
+            let current_app = state.current_app.lock().unwrap().clone();
+            let session_ts = state.session_ts.clone();
+
+            let entry = serde_json::json!({
+                "type": "annotation",
+                "label": label,
+                "url": "",
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+
+            if let Some(ref app_name) = current_app {
+                append_capture(app_name, &entry, &session_ts);
+            }
+
+            serde_json::json!({"ok": true}).to_string()
+        }
+
         "generate_endpoints" => {
             let state = app.state::<AppState>();
             let ts = state.session_ts.clone();
@@ -486,8 +509,8 @@ fn save_capture(app: &tauri::AppHandle, data: &serde_json::Value, session_ts: &s
         None => return,
     };
 
-    // Meta entries (ui-action, navigation, cookies) always pass through — no auth check needed
-    let is_meta = entry_type == "ui-action" || entry_type == "navigation" || entry_type == "cookies";
+    // Meta entries (ui-action, navigation, cookies, annotation) always pass through — no auth check needed
+    let is_meta = entry_type == "ui-action" || entry_type == "navigation" || entry_type == "cookies" || entry_type == "annotation";
 
     if !is_meta {
         // API call — apply filters
@@ -586,8 +609,8 @@ fn append_capture(app_name: &str, data: &serde_json::Value, session_ts: &str) {
         return;
     }
 
-    // Skip noise URLs, but always let ui-action entries through
-    if entry_type != "ui-action" {
+    // Skip noise URLs, but always let ui-action and annotation entries through
+    if entry_type != "ui-action" && entry_type != "annotation" {
         if let Some(url_str) = data.get("url").and_then(|v| v.as_str()) {
             if should_skip_capture(url_str) {
                 return;
@@ -694,4 +717,9 @@ fn update_session(
     if let Ok(json) = serde_json::to_string_pretty(&session) {
         let _ = fs::write(&session_path, json);
     }
+}
+
+/// Public wrapper so lib.rs can call append_capture for annotations.
+pub fn append_capture_pub(app_name: &str, data: &serde_json::Value, session_ts: &str) {
+    append_capture(app_name, data, session_ts);
 }

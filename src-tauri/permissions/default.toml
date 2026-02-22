@@ -13,6 +13,7 @@ permissions = [
   "allow-get-cookies",
   "allow-eval-js",
   "allow-eval-callback",
+  "allow-annotate-action",
 ]
 
 [[permission]]
@@ -69,3 +70,8 @@ commands.allow = ["eval_js"]
 identifier = "allow-eval-callback"
 description = "Allow eval_callback command (IPC return channel for eval)"
 commands.allow = ["eval_callback"]
+
+[[permission]]
+identifier = "allow-annotate-action"
+description = "Allow annotate_action command"
+commands.allow = ["annotate_action"]

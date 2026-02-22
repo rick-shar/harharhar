@@ -261,6 +261,26 @@ async fn eval_js(app: tauri::AppHandle, js: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn annotate_action(app: tauri::AppHandle, label: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let current_app = state.current_app.lock().unwrap().clone();
+    let session_ts = state.session_ts.clone();
+
+    let entry = serde_json::json!({
+        "type": "annotation",
+        "label": label,
+        "url": "",
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    });
+
+    if let Some(ref app_name) = current_app {
+        capture::append_capture_pub(app_name, &entry, &session_ts);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 async fn add_domain(app: tauri::AppHandle, name: String, domain: String) -> Result<(), String> {
     config::add_domain_to_app(&name, &domain);
 
@@ -325,6 +345,7 @@ pub fn run() {
             eval_js,
             eval_callback,
             save_capture_data,
+            annotate_action,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

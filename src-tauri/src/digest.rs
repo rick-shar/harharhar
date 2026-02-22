@@ -283,12 +283,27 @@ fn build_workflows(app_dir: &std::path::Path) -> Vec<Workflow> {
         }
     }
 
-    // Walk through entries, correlating ui-actions with following API calls
+    // Walk through entries, correlating ui-actions with following API calls.
+    // Track the current annotation — when present, it overrides the auto-generated
+    // action description for subsequent ui-actions until consumed.
     let mut workflows: Vec<Workflow> = Vec::new();
     let mut current_action: Option<(Workflow, f64)> = None; // (workflow, action_epoch_ms)
+    let mut current_annotation: Option<String> = None;
 
     for entry in &all_entries {
         let entry_type = entry.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        if entry_type == "annotation" {
+            let ann_label = entry
+                .get("label")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if !ann_label.is_empty() {
+                current_annotation = Some(ann_label);
+            }
+            continue;
+        }
 
         if entry_type == "ui-action" {
             // Flush previous action if it had triggered calls
@@ -308,11 +323,6 @@ fn build_workflows(app_dir: &std::path::Path) -> Vec<Workflow> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let label = entry
-                .get("label")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
             let value = entry
                 .get("value")
                 .and_then(|v| v.as_str())
@@ -322,6 +332,19 @@ fn build_workflows(app_dir: &std::path::Path) -> Vec<Workflow> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+
+            // Use annotation label if available, otherwise use the element label
+            let label = if let Some(ref ann) = current_annotation {
+                ann.clone()
+            } else {
+                entry
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            // Consume annotation after use
+            current_annotation = None;
 
             let epoch = parse_timestamp_ms(&timestamp);
 

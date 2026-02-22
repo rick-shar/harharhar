@@ -15,6 +15,11 @@ let pendingDomains = new Set(); // domains we've already prompted for
 let domainQueue = []; // queued unknown domains waiting for modal
 let modalActive = false; // is a naming modal currently showing
 
+// --- Feed filter state ---
+let feedFilterAuth = true; // default: show auth-only requests
+let totalCount = 0;
+let filteredCount = 0;
+
 // --- App Selector ---
 async function loadAppSelector() {
   try {
@@ -50,6 +55,51 @@ loadAppSelector();
 
 // Refresh app selector when a new app is registered
 listen('config-updated', () => loadAppSelector());
+
+// --- Annotation ---
+document.getElementById('annotate-btn').addEventListener('click', async () => {
+  const input = document.getElementById('annotate-input');
+  const label = input.value.trim();
+  if (!label) return;
+  await invoke('annotate_action', { label });
+  input.value = '';
+  input.placeholder = '\u2713 Labeled: ' + label;
+  setTimeout(() => { input.placeholder = 'Label what you\'re about to do...'; }, 2000);
+});
+
+document.getElementById('annotate-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('annotate-btn').click();
+});
+
+// --- Feed filter toggle ---
+document.getElementById('feed-toggle').addEventListener('click', () => {
+  feedFilterAuth = !feedFilterAuth;
+  const btn = document.getElementById('feed-toggle');
+  btn.textContent = feedFilterAuth ? 'Auth Only' : 'All';
+  btn.classList.toggle('active', feedFilterAuth);
+  updateFeedStats();
+});
+
+function hasAuthHeaders(data) {
+  const headers = data.requestHeaders || {};
+  for (const key of Object.keys(headers)) {
+    const lower = key.toLowerCase();
+    if (lower === 'authorization' || lower === 'x-csrf-token' || lower === 'x-xsrf-token') return true;
+  }
+  const cookies = headers['cookie'] || headers['Cookie'] || '';
+  if (cookies.length > 20) return true;
+  return false;
+}
+
+function updateFeedStats() {
+  const statsEl = document.getElementById('feed-stats');
+  if (feedFilterAuth) {
+    const shown = totalCount - filteredCount;
+    statsEl.textContent = `Showing ${shown} of ${totalCount} requests (auth only)`;
+  } else {
+    statsEl.textContent = `Showing ${totalCount} of ${totalCount} requests (all)`;
+  }
+}
 
 // --- Navigate ---
 function go() {
@@ -89,10 +139,17 @@ clearBtn.addEventListener('click', () => {
 listen('request-captured', event => {
   const req = event.payload;
   // Don't show noise entries in the feed
-  if (req.type === 'cookies' || req.type === 'navigation' || req.type === 'xhr-start' || (req.type || '').startsWith('perf-')) return;
+  if (req.type === 'cookies' || req.type === 'navigation' || req.type === 'xhr-start' || req.type === 'annotation' || (req.type || '').startsWith('perf-')) return;
+  totalCount++;
+  if (feedFilterAuth && !hasAuthHeaders(req)) {
+    filteredCount++;
+    updateFeedStats();
+    return;
+  }
   requests.unshift(req);
   renderReq(req);
   updateStats();
+  updateFeedStats();
 });
 
 // --- Pre-navigate naming: blocks browser until app is named ---
