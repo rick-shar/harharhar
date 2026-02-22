@@ -394,6 +394,7 @@ fn generate_all_endpoints(session_ts: &str) {
     for app_name in config::list_apps() {
         endpoints::generate_for_app(&app_name);
         crate::cleanup::trim_captures_for_app(&app_name, session_ts);
+        crate::digest::generate_for_app(&app_name);
     }
 }
 

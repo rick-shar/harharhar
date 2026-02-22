@@ -1,6 +1,7 @@
 mod capture;
 pub mod cleanup;
 mod config;
+pub mod digest;
 pub mod endpoints;
 
 use std::sync::Mutex;

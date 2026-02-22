@@ -201,6 +201,7 @@ fn main() {
                                 harharhar_lib::endpoints::generate_for_app(name);
                                 // Trim bodies in old captures (no active session, so trim all)
                                 harharhar_lib::cleanup::trim_captures_for_app(name, "");
+                                harharhar_lib::digest::generate_for_app(name);
                             }
                         }
                     }
