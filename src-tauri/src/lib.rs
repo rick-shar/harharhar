@@ -22,6 +22,8 @@ pub struct AppState {
     pub unmapped_captures: Mutex<std::collections::HashMap<String, Vec<serde_json::Value>>>,
     /// Pending eval callbacks: id -> sender
     pub eval_callbacks: Mutex<std::collections::HashMap<String, std::sync::mpsc::Sender<String>>>,
+    /// Cookie names seen in the current session — used by auth-based capture filtering
+    pub session_cookie_names: Mutex<std::collections::HashSet<String>>,
 }
 
 /// Called from injected JS on external pages via Tauri IPC.
@@ -305,6 +307,7 @@ pub fn run() {
         pending_url: Mutex::new(None),
         unmapped_captures: Mutex::new(std::collections::HashMap::new()),
         eval_callbacks: Mutex::new(std::collections::HashMap::new()),
+        session_cookie_names: Mutex::new(std::collections::HashSet::new()),
     };
 
     tauri::Builder::default()

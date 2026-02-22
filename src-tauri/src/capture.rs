@@ -394,6 +394,7 @@ fn generate_all_endpoints(session_ts: &str) {
     for app_name in config::list_apps() {
         endpoints::generate_for_app(&app_name);
         crate::cleanup::trim_captures_for_app(&app_name, session_ts);
+        crate::cleanup::clean_app_domains(&app_name);
         crate::digest::generate_for_app(&app_name);
     }
 }
@@ -436,6 +437,41 @@ fn log_ui_action(app: &tauri::AppHandle, action: &str, ref_id: u64, value: Optio
     append_capture(&app_name, &entry, &session_ts);
 }
 
+// --- Auth-based capture filtering ---
+
+/// Check if a request carries auth headers or session cookies.
+/// Requests without auth can never be replayed by an AI agent, so they're useless to capture.
+fn has_auth(data: &serde_json::Value, session_cookies: &std::collections::HashSet<String>) -> bool {
+    let headers = match data.get("requestHeaders").and_then(|v| v.as_object()) {
+        Some(h) => h,
+        None => return false,
+    };
+
+    // Check for auth headers (NOT x-requested-with — present on almost all XHRs regardless of auth)
+    for key in headers.keys() {
+        let lower = key.to_lowercase();
+        if lower == "authorization" || lower == "x-csrf-token" || lower == "x-xsrf-token" {
+            return true;
+        }
+    }
+
+    // Check for session cookies — if any cookie name in the request matches a known session cookie
+    if let Some(cookie_str) = headers
+        .get("cookie")
+        .or_else(|| headers.get("Cookie"))
+        .and_then(|v| v.as_str())
+    {
+        for part in cookie_str.split(';') {
+            let name = part.trim().split('=').next().unwrap_or("").trim();
+            if session_cookies.contains(name) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 // --- Capture saving ---
 
 fn save_capture(app: &tauri::AppHandle, data: &serde_json::Value, session_ts: &str) {
@@ -450,9 +486,22 @@ fn save_capture(app: &tauri::AppHandle, data: &serde_json::Value, session_ts: &s
         None => return,
     };
 
-    // Skip noise URLs, but always let ui-action entries through
-    if entry_type != "ui-action" && should_skip_capture(url_str) {
-        return;
+    // Meta entries (ui-action, navigation, cookies) always pass through — no auth check needed
+    let is_meta = entry_type == "ui-action" || entry_type == "navigation" || entry_type == "cookies";
+
+    if !is_meta {
+        // API call — apply filters
+        // Static blocklist catches known noise even if authed (e.g. google analytics sharing SID cookies)
+        if should_skip_capture(url_str) {
+            return;
+        }
+
+        // Auth-based filter: no auth headers/cookies = AI can't replay = useless
+        let state = app.state::<AppState>();
+        let session_cookies = state.session_cookie_names.lock().unwrap();
+        if !has_auth(data, &session_cookies) {
+            return;
+        }
     }
 
     let domain = match url::Url::parse(url_str) {
@@ -476,10 +525,20 @@ fn save_capture(app: &tauri::AppHandle, data: &serde_json::Value, session_ts: &s
             update_session(app, &name, &domain, data);
         }
         None => {
-            // If browser is open for a known app, auto-add this domain to it
+            // If browser is open for a known app, auto-add this domain — but ONLY if authed.
+            // This prevents third-party domains (amp4mail.googleusercontent.com, etc.) from being added.
             let current = app.state::<AppState>().current_app.lock().unwrap().clone();
 
             if let Some(ref name) = current {
+                // Only auto-add domain if the request carries auth
+                let state_ref = app.state::<AppState>();
+                let session_cookies = state_ref.session_cookie_names.lock().unwrap();
+                if !has_auth(data, &session_cookies) {
+                    // No auth = don't add domain, don't save capture, silently drop
+                    return;
+                }
+                drop(session_cookies); // release lock before further state access
+
                 // Auto-add domain to the current app
                 config::add_domain_to_app(name, &domain);
                 {
@@ -603,7 +662,9 @@ fn update_session(
                     if let Some(eq) = trimmed.find('=') {
                         let name = trimmed[..eq].trim().to_string();
                         let value = trimmed[eq + 1..].trim().to_string();
-                        session.cookies.insert(name, value);
+                        session.cookies.insert(name.clone(), value);
+                        // Track cookie name for auth-based capture filtering
+                        state.session_cookie_names.lock().unwrap().insert(name);
                     }
                 }
             }
