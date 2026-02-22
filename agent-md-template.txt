@@ -1,0 +1,125 @@
+# harharhar — Instructions for AI Agents
+
+You have access to web app API data captured by harharhar at `~/.harharhar/apps/`.
+
+## How it works
+
+harharhar is a browser that captures all API traffic as you browse web apps. It saves sessions, cookies, auth tokens, and endpoint data to disk. You read these files and operate apps via `curl` — no API tokens needed.
+
+## App Folders
+
+Each folder in `apps/` is a web app (e.g., `gmail/`, `slack/`, `jira/`).
+
+Inside each app folder:
+- `config.json` — domains this app uses
+- `endpoints.json` — auto-detected endpoints from captured traffic
+- `auth.json` — auto-detected auth patterns
+- `sessions/latest.json` — current session: cookies, auth tokens, user-agent
+- `captures/*.jsonl` — raw API traffic (one line per request)
+
+## When asked to do something with a web app:
+
+1. **Find the app folder.** List `~/.harharhar/apps/`. If the app isn't there:
+   → "I don't have data for this app. Open harharhar and browse it so I can learn the API."
+
+2. **Check the session.** Read `sessions/latest.json`. If `captured_at` is old (> 1 hour):
+   → "Session might be expired. Open harharhar and log into {app} again."
+
+3. **Check endpoints.** Read `endpoints.json` to find the right API calls.
+   - If you have what you need → construct curl using session data
+   - If not → read `captures/*.jsonl` to learn new endpoints
+
+4. **If a request returns 401/403:**
+   → "Session expired. Open harharhar and log into {app} again."
+
+## Making authenticated requests
+
+Read `sessions/latest.json` and construct curl:
+
+```bash
+curl 'https://mail.google.com/mail/u/0/endpoint' \
+  -H 'Cookie: SID=...; HSID=...' \
+  -H 'Authorization: SAPISIDHASH ...' \
+  -H 'User-Agent: Mozilla/5.0 (Macintosh; ...) Chrome/...' \
+  -H 'Content-Type: application/json'
+```
+
+**Always use the exact user-agent from the session file** — the server saw this UA during login and may reject mismatches.
+
+Build cookie header by joining all cookies: `Cookie: name1=val1; name2=val2; ...`
+
+## Interacting with pages (browser commands)
+
+Write a JSON command to `~/.harharhar/cmd.json`. The browser picks it up and writes the result to `~/.harharhar/cmd-result.json`.
+
+**Read the UI (lean accessibility tree):**
+```json
+{"action": "read_ui"}
+```
+Returns a compact tree of visible elements with ref numbers. Much faster than screenshots.
+
+**Click an element by ref:**
+```json
+{"action": "click_ref", "ref": 5}
+```
+
+**Type into an input by ref:**
+```json
+{"action": "type_ref", "ref": 12, "value": "search query"}
+```
+
+**Select a dropdown value by ref:**
+```json
+{"action": "select_ref", "ref": 8, "value": "option_value"}
+```
+
+**Navigate to a URL:**
+```json
+{"action": "navigate", "url": "https://example.com"}
+```
+
+**Run arbitrary JS:**
+```json
+{"action": "eval", "js": "document.title"}
+```
+
+**Get page HTML (raw, large):**
+```json
+{"action": "read_page"}
+```
+
+**Check status:**
+```json
+{"action": "status"}
+```
+
+### Using browser commands from bash:
+
+```bash
+# Write command
+echo '{"action": "read_ui"}' > ~/.harharhar/cmd.json
+
+# Wait for result (poll)
+while [ ! -f ~/.harharhar/cmd-result.json ]; do sleep 0.1; done
+cat ~/.harharhar/cmd-result.json
+rm ~/.harharhar/cmd-result.json
+```
+
+## File format reference
+
+**sessions/latest.json:**
+```json
+{
+  "domain": "mail.google.com",
+  "captured_at": "2026-02-21T14:30:00Z",
+  "cookies": {"SID": "...", "HSID": "..."},
+  "auth_headers": {"Authorization": "SAPISIDHASH ..."},
+  "csrf_tokens": {"X-CSRF-Token": "..."},
+  "user_agent": "Mozilla/5.0 ... Chrome/144.0.0.0 ..."
+}
+```
+
+**captures/*.jsonl (one line per request):**
+```json
+{"type":"fetch","method":"GET","url":"https://...","requestHeaders":{},"requestBody":null,"status":200,"responseHeaders":{},"responseBody":"...","duration":142,"timestamp":"2026-02-21T14:30:12Z"}
+```

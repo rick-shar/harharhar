@@ -85,7 +85,7 @@ async fn resume_navigate(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn open_browser(app: &tauri::AppHandle, url: url::Url) -> Result<(), String> {
+pub fn open_browser(app: &tauri::AppHandle, url: url::Url) -> Result<(), String> {
     let state = app.state::<AppState>();
     let ua = state.browser_ua.clone();
 

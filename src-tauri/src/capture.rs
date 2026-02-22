@@ -18,6 +18,121 @@ const COOKIE_HEADERS: &[&str] = &["cookie"];
 /// Counter to trigger periodic endpoint generation
 static CAPTURE_COUNT: AtomicU32 = AtomicU32::new(0);
 
+/// JS that builds a lean accessibility-tree-like UI model.
+/// Stores element refs in window.__hh_refs for click_ref/type_ref.
+const READ_UI_JS: &str = r#"(() => {
+  const refs = [];
+  window.__hh_refs = refs;
+  const lines = [];
+
+  function isVis(el) {
+    if (el.checkVisibility) return el.checkVisibility();
+    if (el.offsetParent === null && el.tagName !== 'BODY' && el.tagName !== 'HTML') return false;
+    var s = getComputedStyle(el);
+    return s.display !== 'none' && s.visibility !== 'hidden';
+  }
+
+  function role(el) {
+    var ar = el.getAttribute('role');
+    if (ar) return ar;
+    var t = el.tagName.toLowerCase();
+    var ty = (el.getAttribute('type') || '').toLowerCase();
+    switch(t) {
+      case 'a': return el.href ? 'link' : null;
+      case 'button': return 'button';
+      case 'input':
+        if (ty === 'submit' || ty === 'button') return 'button';
+        if (ty === 'checkbox') return 'checkbox';
+        if (ty === 'radio') return 'radio';
+        if (ty === 'hidden') return null;
+        return 'input[' + (ty || 'text') + ']';
+      case 'select': return 'select';
+      case 'textarea': return 'textarea';
+      case 'img': return 'img';
+      case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6': return t;
+      case 'nav': return 'nav';
+      case 'main': return 'main';
+      case 'aside': return 'aside';
+      case 'header': return 'banner';
+      case 'footer': return 'footer';
+      case 'form': return 'form';
+      case 'table': return 'table';
+      case 'tr': return 'row';
+      case 'td': case 'th': return 'cell';
+      case 'ul': case 'ol': return 'list';
+      case 'li': return 'listitem';
+      case 'dialog': return 'dialog';
+      case 'summary': return 'summary';
+      default:
+        if (el.onclick || el.getAttribute('tabindex') === '0') return 'clickable';
+        return null;
+    }
+  }
+
+  function label(el) {
+    var al = el.getAttribute('aria-label');
+    if (al) return al.trim().substring(0, 80);
+    var t = el.tagName;
+    if (t === 'INPUT' || t === 'TEXTAREA') {
+      if (el.placeholder) return el.placeholder.substring(0, 80);
+      if (el.title) return el.title.substring(0, 80);
+      if (el.id) { var lb = document.querySelector('label[for="' + el.id + '"]'); if (lb) return lb.textContent.trim().substring(0, 80); }
+    }
+    if (t === 'IMG') return (el.alt || el.title || '').substring(0, 80);
+    var txt = '';
+    for (var i = 0; i < el.childNodes.length; i++) {
+      if (el.childNodes[i].nodeType === 3) txt += el.childNodes[i].textContent;
+    }
+    txt = txt.trim();
+    if (txt) return txt.substring(0, 80);
+    if (el.children.length <= 2) {
+      var inner = (el.innerText || '').trim();
+      if (inner && inner.length < 120) return inner.substring(0, 80);
+    }
+    return '';
+  }
+
+  function state(el) {
+    var s = [];
+    if (el.disabled) s.push('disabled');
+    if (el.checked) s.push('checked');
+    if (el.getAttribute('aria-selected') === 'true') s.push('selected');
+    if (el.getAttribute('aria-expanded') === 'true') s.push('expanded');
+    if (el.getAttribute('aria-expanded') === 'false') s.push('collapsed');
+    if (el.getAttribute('aria-current')) s.push('current');
+    if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.value) s.push('val="' + el.value.substring(0, 50) + '"');
+    if (el.tagName === 'SELECT' && el.selectedOptions.length) s.push('val="' + el.selectedOptions[0].text.substring(0, 50) + '"');
+    return s.join(' ');
+  }
+
+  function walk(el, depth) {
+    if (depth > 12 || !isVis(el)) return;
+    var r = role(el);
+    if (r) {
+      var idx = refs.length;
+      refs.push(el);
+      var lb = label(el);
+      var st = state(el);
+      var indent = '';
+      for (var i = 0; i < Math.min(depth, 8); i++) indent += '  ';
+      var line = indent + '[' + idx + '] ' + r;
+      if (lb) line += ' "' + lb.replace(/"/g, '\\"') + '"';
+      if (st) line += ' ' + st;
+      lines.push(line);
+    }
+    for (var c = 0; c < el.children.length; c++) {
+      walk(el.children[c], depth + (r ? 1 : 0));
+    }
+  }
+
+  walk(document.body, 0);
+  if (lines.length > 500) {
+    lines.length = 500;
+    lines.push('... truncated (' + refs.length + ' total refs)');
+  }
+  return 'Page: ' + document.title + '\nURL: ' + location.href + '\n' + refs.length + ' elements\n---\n' + lines.join('\n');
+})()"#;
+
 // --- Process a single capture entry (called from Tauri IPC command) ---
 
 pub fn process_single(app: &tauri::AppHandle, data: &serde_json::Value, session_ts: &str) {
@@ -70,19 +185,28 @@ fn handle_command(app: &tauri::AppHandle, body: &str) -> String {
             if url.is_empty() {
                 return r#"{"error":"missing url"}"#.to_string();
             }
-            let wv = app.get_webview_window("browser");
-            match wv {
-                Some(wv) => {
-                    let js = format!(
-                        "window.location.href={}",
-                        serde_json::to_string(url).unwrap()
-                    );
-                    match wv.eval(&js) {
+            let mut raw = url.to_string();
+            if !raw.starts_with("http") {
+                raw = format!("https://{raw}");
+            }
+            match url::Url::parse(&raw) {
+                Ok(parsed) => {
+                    // Set current_app if domain is known
+                    let domain = parsed.host_str().unwrap_or("").to_string();
+                    {
+                        let state = app.state::<crate::AppState>();
+                        let map = state.domain_map.lock().unwrap();
+                        if let Some(name) = map.get(&domain) {
+                            let mut current = state.current_app.lock().unwrap();
+                            *current = Some(name.clone());
+                        }
+                    }
+                    match crate::open_browser(app, parsed) {
                         Ok(_) => r#"{"ok":true}"#.to_string(),
-                        Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+                        Err(e) => serde_json::json!({"error": e}).to_string(),
                     }
                 }
-                None => r#"{"error":"browser window not open"}"#.to_string(),
+                Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
             }
         }
 
@@ -118,6 +242,38 @@ fn handle_command(app: &tauri::AppHandle, body: &str) -> String {
 
         "read_page" => {
             exec_js_with_result(app, "document.documentElement.outerHTML.substring(0, 500000)")
+        }
+
+        "read_ui" => {
+            exec_js_with_result(app, READ_UI_JS)
+        }
+
+        "click_ref" => {
+            let ref_id = cmd.get("ref").and_then(|v| v.as_u64()).unwrap_or(0);
+            exec_js_with_result(app, &format!(
+                "(() => {{ const refs = window.__hh_refs || []; const el = refs[{}]; if(!el) return 'ref not found'; el.scrollIntoView({{block:'center'}}); el.click(); return 'clicked'; }})()",
+                ref_id
+            ))
+        }
+
+        "type_ref" => {
+            let ref_id = cmd.get("ref").and_then(|v| v.as_u64()).unwrap_or(0);
+            let value = cmd.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            exec_js_with_result(app, &format!(
+                "(() => {{ const refs = window.__hh_refs || []; const el = refs[{}]; if(!el) return 'ref not found'; el.focus(); el.value = {}; el.dispatchEvent(new Event('input', {{bubbles:true}})); el.dispatchEvent(new Event('change', {{bubbles:true}})); return 'typed'; }})()",
+                ref_id,
+                serde_json::to_string(value).unwrap()
+            ))
+        }
+
+        "select_ref" => {
+            let ref_id = cmd.get("ref").and_then(|v| v.as_u64()).unwrap_or(0);
+            let value = cmd.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            exec_js_with_result(app, &format!(
+                "(() => {{ const refs = window.__hh_refs || []; const el = refs[{}]; if(!el) return 'ref not found'; el.value = {}; el.dispatchEvent(new Event('change', {{bubbles:true}})); return 'selected ' + el.value; }})()",
+                ref_id,
+                serde_json::to_string(value).unwrap()
+            ))
         }
 
         "get_cookies" => {

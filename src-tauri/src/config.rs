@@ -52,7 +52,15 @@ pub fn data_dir() -> PathBuf {
 pub fn ensure_dirs() {
     let root = data_dir();
     let _ = fs::create_dir_all(root.join("apps"));
+
+    // Write AGENT.md if it doesn't exist
+    let agent_md = root.join("AGENT.md");
+    if !agent_md.exists() {
+        let _ = fs::write(&agent_md, AGENT_MD_TEMPLATE);
+    }
 }
+
+const AGENT_MD_TEMPLATE: &str = include_str!("../../agent-md-template.txt");
 
 /// Ensure an app's full directory structure exists
 pub fn ensure_app_dirs(app_name: &str) {
