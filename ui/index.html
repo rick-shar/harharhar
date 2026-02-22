@@ -9,11 +9,18 @@
   <div id="url-bar">
     <input id="url-input" type="text" placeholder="Enter URL..." spellcheck="false" autofocus>
     <button id="go-btn">Go</button>
+    <button id="end-session-btn" title="Finalize session — generate digest and endpoints">Done</button>
     <button id="clear-btn">Clear</button>
   </div>
   <div id="annotate-bar">
     <input type="text" id="annotate-input" placeholder="Label what you're about to do..." />
     <button id="annotate-btn">Label</button>
+  </div>
+  <div id="label-close-bar" class="hidden">
+    <span id="label-close-original"></span>
+    <input type="text" id="label-close-input" placeholder="what actually happened?" />
+    <button id="label-close-btn">Done</button>
+    <span id="label-close-timer"></span>
   </div>
   <div id="app-selector"></div>
   <div id="alerts"></div>

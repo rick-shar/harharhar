@@ -41,6 +41,10 @@ button {
 }
 button:hover { background: #c73e54; }
 
+#end-session-btn { background: #0a6640; font-size: 11px; }
+#end-session-btn:hover { background: #0d8050; }
+#end-session-btn.processing { background: #533483; pointer-events: none; }
+
 #clear-btn { background: #533483; }
 #clear-btn:hover { background: #3e2763; }
 
@@ -68,6 +72,16 @@ button:hover { background: #c73e54; }
   border-color: #533483;
   color: #e0e0e0;
 }
+#annotate-input.pending {
+  border-color: #e94560;
+  color: #e0e0e0;
+  background: #2a1a2e;
+  animation: pulse-border 1.5s ease-in-out infinite;
+}
+@keyframes pulse-border {
+  0%, 100% { border-color: #e94560; }
+  50% { border-color: #533483; }
+}
 
 #annotate-btn {
   padding: 4px 10px;
@@ -76,6 +90,53 @@ button:hover { background: #c73e54; }
 }
 #annotate-btn:hover {
   background: #6b44a8;
+}
+
+/* Label close bar — retrospective annotation */
+#label-close-bar {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  gap: 6px;
+  background: #1c1a2e;
+  border-bottom: 1px solid #533483;
+}
+#label-close-bar.hidden { display: none; }
+
+#label-close-original {
+  font-size: 10px;
+  color: #e94560;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#label-close-input {
+  flex: 1;
+  padding: 4px 8px;
+  background: #1a1a2e;
+  border: 1px solid #533483;
+  color: #e0e0e0;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  outline: none;
+}
+#label-close-input:focus { border-color: #e94560; }
+
+#label-close-btn {
+  padding: 4px 10px;
+  background: #533483;
+  font-size: 11px;
+}
+#label-close-btn:hover { background: #6b44a8; }
+
+#label-close-timer {
+  font-size: 10px;
+  color: #555;
+  min-width: 24px;
+  text-align: right;
 }
 
 /* Feed controls */

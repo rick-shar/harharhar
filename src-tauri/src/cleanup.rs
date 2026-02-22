@@ -223,9 +223,21 @@ pub fn clean_app_domains(app_name: &str) {
                 Err(_) => continue,
             };
 
-            // Skip meta entries — they don't carry auth
             let entry_type = data.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            if entry_type == "ui-action" || entry_type == "navigation" || entry_type == "cookies" {
+            // Skip pure meta entries that don't indicate auth
+            if entry_type == "ui-action" || entry_type == "navigation" || entry_type == "annotation" {
+                continue;
+            }
+
+            // Cookies entries are auth evidence — the browser has cookies for this domain
+            if entry_type == "cookies" {
+                if let Some(u) = data.get("url").and_then(|v| v.as_str()) {
+                    if let Ok(parsed) = url::Url::parse(u) {
+                        if let Some(h) = parsed.host_str() {
+                            authed_domains.insert(h.to_string());
+                        }
+                    }
+                }
                 continue;
             }
 

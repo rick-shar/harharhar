@@ -20,6 +20,12 @@ let feedFilterAuth = true; // default: show auth-only requests
 let totalCount = 0;
 let filteredCount = 0;
 
+// --- Active label tracking ---
+let activeLabel = null;       // the current label text
+let labelCloseTimer = null;   // countdown interval
+let labelCloseTimeout = null; // main timer
+const LABEL_INACTIVITY = 8; // seconds of NO new captures before showing close prompt
+
 // --- App Selector ---
 async function loadAppSelector() {
   try {
@@ -40,7 +46,7 @@ async function loadAppSelector() {
       btn.addEventListener('click', () => {
         if (primaryDomain) {
           urlInput.value = primaryDomain;
-          invoke('navigate', { url: primaryDomain });
+          go(); // goes through annotation-first flow
         }
       });
       appSelector.appendChild(btn);
@@ -57,18 +63,139 @@ loadAppSelector();
 listen('config-updated', () => loadAppSelector());
 
 // --- Annotation ---
-document.getElementById('annotate-btn').addEventListener('click', async () => {
+function submitAnnotation() {
   const input = document.getElementById('annotate-input');
   const label = input.value.trim();
+  input.classList.remove('pending');
+
+  if (pendingNavigateUrl) {
+    const url = pendingNavigateUrl;
+    pendingNavigateUrl = null;
+    if (label) {
+      // Close any active label first, then start the new one
+      closeActiveLabel();
+      invoke('annotate_action', { label });
+      startLabelLifecycle(label);
+      input.value = '';
+      input.placeholder = '\u2713 ' + label;
+      setTimeout(() => { input.placeholder = 'Label what you\'re about to do...'; }, 2000);
+    } else {
+      input.placeholder = 'Label what you\'re about to do...';
+    }
+    invoke('navigate', { url });
+    return;
+  }
+
+  // Standalone annotation (no pending navigate)
   if (!label) return;
-  await invoke('annotate_action', { label });
+  closeActiveLabel();
+  invoke('annotate_action', { label });
+  startLabelLifecycle(label);
   input.value = '';
-  input.placeholder = '\u2713 Labeled: ' + label;
+  input.placeholder = '\u2713 ' + label;
   setTimeout(() => { input.placeholder = 'Label what you\'re about to do...'; }, 2000);
-});
+}
+
+document.getElementById('annotate-btn').addEventListener('click', submitAnnotation);
 
 document.getElementById('annotate-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') document.getElementById('annotate-btn').click();
+  if (e.key === 'Enter') {
+    submitAnnotation();
+  } else if (e.key === 'Escape' && pendingNavigateUrl) {
+    const input = document.getElementById('annotate-input');
+    input.classList.remove('pending');
+    input.value = '';
+    input.placeholder = 'Label what you\'re about to do...';
+    const url = pendingNavigateUrl;
+    pendingNavigateUrl = null;
+    invoke('navigate', { url });
+  }
+});
+
+// --- Label lifecycle: active label → timer → close prompt → done ---
+
+function startLabelLifecycle(label) {
+  activeLabel = label;
+  // Show close prompt after LABEL_INACTIVITY seconds of no new captures.
+  // Every new capture resets the timer — so busy workflows stay open.
+  resetLabelInactivityTimer();
+}
+
+function resetLabelInactivityTimer() {
+  if (!activeLabel) return;
+  clearTimeout(labelCloseTimeout);
+  labelCloseTimeout = setTimeout(() => showLabelClosePrompt(), LABEL_INACTIVITY * 1000);
+}
+
+function showLabelClosePrompt() {
+  if (!activeLabel) return;
+  const bar = document.getElementById('label-close-bar');
+  const original = document.getElementById('label-close-original');
+  const input = document.getElementById('label-close-input');
+  const timerEl = document.getElementById('label-close-timer');
+
+  original.textContent = activeLabel;
+  original.title = activeLabel;
+  input.value = '';
+  input.placeholder = 'what actually happened? (or leave blank to keep)';
+  bar.classList.remove('hidden');
+
+  // 30 second countdown to auto-close
+  let remaining = 30;
+  timerEl.textContent = remaining + 's';
+  clearInterval(labelCloseTimer);
+  labelCloseTimer = setInterval(() => {
+    remaining--;
+    timerEl.textContent = remaining + 's';
+    if (remaining <= 0) {
+      closeLabelPrompt(null); // auto-close with original label
+    }
+  }, 1000);
+
+  input.focus();
+}
+
+function closeLabelPrompt(revised) {
+  clearInterval(labelCloseTimer);
+  clearTimeout(labelCloseTimeout);
+
+  const bar = document.getElementById('label-close-bar');
+  bar.classList.add('hidden');
+
+  if (activeLabel) {
+    const finalLabel = revised || activeLabel;
+    // Save a close annotation so the digest knows when the workflow ended
+    // and what actually happened
+    invoke('annotate_action', { label: '[done] ' + finalLabel });
+  }
+  activeLabel = null;
+}
+
+// Silently close the active label (when starting a new one)
+function closeActiveLabel() {
+  if (!activeLabel) return;
+  clearInterval(labelCloseTimer);
+  clearTimeout(labelCloseTimeout);
+  // Save close with original label — the new label supersedes it
+  invoke('annotate_action', { label: '[done] ' + activeLabel });
+  activeLabel = null;
+  document.getElementById('label-close-bar').classList.add('hidden');
+}
+
+document.getElementById('label-close-btn').addEventListener('click', () => {
+  const input = document.getElementById('label-close-input');
+  const revised = input.value.trim();
+  closeLabelPrompt(revised || null);
+});
+
+document.getElementById('label-close-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const input = document.getElementById('label-close-input');
+    const revised = input.value.trim();
+    closeLabelPrompt(revised || null);
+  } else if (e.key === 'Escape') {
+    closeLabelPrompt(null); // keep original
+  }
 });
 
 // --- Feed filter toggle ---
@@ -102,10 +229,33 @@ function updateFeedStats() {
 }
 
 // --- Navigate ---
+// Navigation is blocked until a label is set (annotation-first workflow).
+// The annotation bar gets focus. User types what they're about to do, then
+// pressing Enter in the annotation bar both saves the label and navigates.
+let pendingNavigateUrl = null;
+
 function go() {
   let url = urlInput.value.trim();
   if (!url) return;
-  invoke('navigate', { url });
+
+  const annotateInput = document.getElementById('annotate-input');
+  const existingLabel = annotateInput.value.trim();
+
+  if (existingLabel) {
+    // Label already set — annotate and navigate immediately
+    invoke('annotate_action', { label: existingLabel });
+    annotateInput.value = '';
+    annotateInput.placeholder = '\u2713 ' + existingLabel;
+    setTimeout(() => { annotateInput.placeholder = 'Label what you\'re about to do...'; }, 2000);
+    pendingNavigateUrl = null;
+    invoke('navigate', { url });
+  } else {
+    // No label — block and focus annotation bar
+    pendingNavigateUrl = url;
+    annotateInput.placeholder = 'What are you about to do? (Enter to go, Esc to skip)';
+    annotateInput.focus();
+    annotateInput.classList.add('pending');
+  }
 }
 
 goBtn.addEventListener('click', go);
@@ -114,6 +264,22 @@ clearBtn.addEventListener('click', () => {
   requests = [];
   feed.innerHTML = '';
   updateStats();
+});
+
+// --- End Session ---
+document.getElementById('end-session-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('end-session-btn');
+  btn.textContent = '...';
+  btn.classList.add('processing');
+  closeActiveLabel();
+  try {
+    await invoke('end_session');
+    showNotice('Session finalized — digest and endpoints updated');
+  } catch (e) {
+    showNotice('Error: ' + e);
+  }
+  btn.textContent = 'Done';
+  btn.classList.remove('processing');
 });
 
 // --- Check UA on startup ---
@@ -138,6 +304,9 @@ clearBtn.addEventListener('click', () => {
 // --- Listen for captured requests ---
 listen('request-captured', event => {
   const req = event.payload;
+  // Every capture = activity → reset the label inactivity timer
+  resetLabelInactivityTimer();
+
   // Don't show noise entries in the feed
   if (req.type === 'cookies' || req.type === 'navigation' || req.type === 'xhr-start' || req.type === 'annotation' || (req.type || '').startsWith('perf-')) return;
   totalCount++;

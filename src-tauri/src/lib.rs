@@ -24,6 +24,8 @@ pub struct AppState {
     pub eval_callbacks: Mutex<std::collections::HashMap<String, std::sync::mpsc::Sender<String>>>,
     /// Cookie names seen in the current session — used by auth-based capture filtering
     pub session_cookie_names: Mutex<std::collections::HashSet<String>>,
+    /// Active label for the current workflow (set by annotate, closed by next annotate or close_label)
+    pub active_label: Mutex<Option<String>>,
 }
 
 /// Called from injected JS on external pages via Tauri IPC.
@@ -53,7 +55,7 @@ async fn navigate(app: tauri::AppHandle, url: String) -> Result<(), String> {
         map.get(&domain).cloned()
     };
 
-    // If domain unknown, block browser and ask for name first
+    // If domain truly unknown, block browser and ask for name first
     if app_name.is_none() {
         {
             let mut pending = state.pending_url.lock().unwrap();
@@ -281,6 +283,37 @@ async fn annotate_action(app: tauri::AppHandle, label: String) -> Result<(), Str
 }
 
 #[tauri::command]
+async fn end_session(app: tauri::AppHandle) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    let ts = state.session_ts.clone();
+
+    // Close active label
+    let label = state.active_label.lock().unwrap().take();
+    if let Some(label) = label {
+        let current_app = state.current_app.lock().unwrap().clone();
+        if let Some(ref app_name) = current_app {
+            let entry = serde_json::json!({
+                "type": "annotation",
+                "label": format!("[done] {}", label),
+                "url": "",
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+            capture::append_capture_pub(app_name, &entry, &ts);
+        }
+    }
+
+    // Generate endpoints, digest, cleanup for all apps
+    for app_name in config::list_apps() {
+        endpoints::generate_for_app(&app_name);
+        cleanup::trim_captures_for_app(&app_name, &ts);
+        cleanup::clean_app_domains(&app_name);
+        digest::generate_for_app(&app_name);
+    }
+
+    Ok("session finalized".to_string())
+}
+
+#[tauri::command]
 async fn add_domain(app: tauri::AppHandle, name: String, domain: String) -> Result<(), String> {
     config::add_domain_to_app(&name, &domain);
 
@@ -328,6 +361,7 @@ pub fn run() {
         unmapped_captures: Mutex::new(std::collections::HashMap::new()),
         eval_callbacks: Mutex::new(std::collections::HashMap::new()),
         session_cookie_names: Mutex::new(std::collections::HashSet::new()),
+        active_label: Mutex::new(None),
     };
 
     tauri::Builder::default()
@@ -346,6 +380,7 @@ pub fn run() {
             eval_callback,
             save_capture_data,
             annotate_action,
+            end_session,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

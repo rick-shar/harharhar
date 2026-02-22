@@ -75,7 +75,18 @@ Returns a compact tree of visible elements with ref numbers. Much faster than sc
 
 **Navigate to a URL:**
 ```json
-{"action": "navigate", "url": "https://example.com"}
+{"action": "navigate", "url": "https://example.com", "app": "myapp", "label": "checking order status"}
+```
+`label` is required — describe what you're about to do. This annotation gets saved to captures and drives workflow understanding. Pass `"skip_label": true` to bypass.
+`app` tells harharhar which app you're working with when the URL domain isn't in the app's domain list.
+
+**Annotate what you're about to do (labels workflows in captures):**
+```json
+{"action": "annotate", "label": "searching for recent orders"}
+```
+Starting a new annotation auto-closes the previous one. To explicitly close and optionally revise:
+```json
+{"action": "close_label", "label": "actually ended up deleting old orders"}
 ```
 
 **Run arbitrary JS:**

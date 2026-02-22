@@ -14,6 +14,8 @@ permissions = [
   "allow-eval-js",
   "allow-eval-callback",
   "allow-annotate-action",
+  "allow-end-session",
+  "allow-save-capture-data",
 ]
 
 [[permission]]
@@ -75,3 +77,8 @@ commands.allow = ["eval_callback"]
 identifier = "allow-annotate-action"
 description = "Allow annotate_action command"
 commands.allow = ["annotate_action"]
+
+[[permission]]
+identifier = "allow-end-session"
+description = "Allow end_session command"
+commands.allow = ["end_session"]

@@ -242,22 +242,54 @@ fn handle_command(app: &tauri::AppHandle, body: &str) -> String {
             if url.is_empty() {
                 return r#"{"error":"missing url"}"#.to_string();
             }
+
+            // Require a label before navigating — forces intentional workflows.
+            // Pass "label" to annotate inline, or "skip_label": true to bypass.
+            let label = cmd.get("label").and_then(|v| v.as_str()).unwrap_or("");
+            let skip_label = cmd.get("skip_label").and_then(|v| v.as_bool()).unwrap_or(false);
+            if label.is_empty() && !skip_label {
+                return r#"{"error":"label required — what are you about to do? Pass \"label\" or \"skip_label\": true"}"#.to_string();
+            }
+
             let mut raw = url.to_string();
             if !raw.starts_with("http") {
                 raw = format!("https://{raw}");
             }
             match url::Url::parse(&raw) {
                 Ok(parsed) => {
-                    // Set current_app if domain is known
                     let domain = parsed.host_str().unwrap_or("").to_string();
+                    let explicit_app = cmd.get("app").and_then(|v| v.as_str()).map(|s| s.to_string());
                     {
                         let state = app.state::<crate::AppState>();
-                        let map = state.domain_map.lock().unwrap();
-                        if let Some(name) = map.get(&domain) {
+                        let resolved = explicit_app.or_else(|| {
+                            let map = state.domain_map.lock().unwrap();
+                            map.get(&domain).cloned()
+                        });
+                        if let Some(name) = resolved {
                             let mut current = state.current_app.lock().unwrap();
-                            *current = Some(name.clone());
+                            *current = Some(name);
                         }
                     }
+
+                    // Close previous active label, then start new one
+                    if !label.is_empty() {
+                        close_active_label(app);
+                        let state = app.state::<crate::AppState>();
+                        let current_app = state.current_app.lock().unwrap().clone();
+                        let session_ts = state.session_ts.clone();
+                        if let Some(ref app_name) = current_app {
+                            let entry = serde_json::json!({
+                                "type": "annotation",
+                                "label": label,
+                                "url": raw,
+                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                            });
+                            append_capture(app_name, &entry, &session_ts);
+                        }
+                        // Track as active label
+                        *state.active_label.lock().unwrap() = Some(label.to_string());
+                    }
+
                     match crate::open_browser(app, parsed) {
                         Ok(_) => r#"{"ok":true}"#.to_string(),
                         Err(e) => serde_json::json!({"error": e}).to_string(),
@@ -375,18 +407,43 @@ fn handle_command(app: &tauri::AppHandle, body: &str) -> String {
             let current_app = state.current_app.lock().unwrap().clone();
             let session_ts = state.session_ts.clone();
 
-            let entry = serde_json::json!({
-                "type": "annotation",
-                "label": label,
-                "url": "",
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-            });
-
-            if let Some(ref app_name) = current_app {
-                append_capture(app_name, &entry, &session_ts);
+            match current_app {
+                Some(ref app_name) => {
+                    // Close previous label, start new one
+                    close_active_label(app);
+                    let entry = serde_json::json!({
+                        "type": "annotation",
+                        "label": label,
+                        "url": "",
+                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                    });
+                    append_capture(app_name, &entry, &session_ts);
+                    *state.active_label.lock().unwrap() = Some(label.to_string());
+                    serde_json::json!({"ok": true, "app": app_name}).to_string()
+                }
+                None => {
+                    r#"{"error":"no active app — navigate to an app first"}"#.to_string()
+                }
             }
+        }
 
-            serde_json::json!({"ok": true}).to_string()
+        "close_label" => {
+            let revised = cmd.get("label").and_then(|v| v.as_str()).unwrap_or("");
+            let state = app.state::<crate::AppState>();
+            let prev = state.active_label.lock().unwrap().clone();
+            match prev {
+                Some(_) => {
+                    if !revised.is_empty() {
+                        // Override the active label before closing
+                        *state.active_label.lock().unwrap() = Some(revised.to_string());
+                    }
+                    close_active_label(app);
+                    serde_json::json!({"ok": true}).to_string()
+                }
+                None => {
+                    r#"{"ok":true,"note":"no active label to close"}"#.to_string()
+                }
+            }
         }
 
         "generate_endpoints" => {
@@ -396,8 +453,35 @@ fn handle_command(app: &tauri::AppHandle, body: &str) -> String {
             r#"{"ok":true}"#.to_string()
         }
 
+        "end_session" => {
+            close_active_label(app);
+            let state = app.state::<AppState>();
+            let ts = state.session_ts.clone();
+            generate_all_endpoints(&ts);
+            r#"{"ok":true,"note":"session finalized"}"#.to_string()
+        }
+
         _ => {
             serde_json::json!({"error": format!("unknown action: {}", action)}).to_string()
+        }
+    }
+}
+
+/// Close the active label by writing a "[done]" annotation to captures.
+fn close_active_label(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let label = state.active_label.lock().unwrap().take();
+    if let Some(label) = label {
+        let current_app = state.current_app.lock().unwrap().clone();
+        let session_ts = state.session_ts.clone();
+        if let Some(ref app_name) = current_app {
+            let entry = serde_json::json!({
+                "type": "annotation",
+                "label": format!("[done] {}", label),
+                "url": "",
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+            append_capture(app_name, &entry, &session_ts);
         }
     }
 }
@@ -462,15 +546,18 @@ fn log_ui_action(app: &tauri::AppHandle, action: &str, ref_id: u64, value: Optio
 
 // --- Auth-based capture filtering ---
 
-/// Check if a request carries auth headers or session cookies.
+/// Check if a request carries auth headers or cookies.
 /// Requests without auth can never be replayed by an AI agent, so they're useless to capture.
-fn has_auth(data: &serde_json::Value, session_cookies: &std::collections::HashSet<String>) -> bool {
+/// Any Cookie header counts as auth — the browser only sends cookies for domains that set them,
+/// which means the user has a session. This avoids the bootstrapping problem where session_cookie_names
+/// is empty on fresh starts and legitimate requests get dropped.
+fn has_auth(data: &serde_json::Value, _session_cookies: &std::collections::HashSet<String>) -> bool {
     let headers = match data.get("requestHeaders").and_then(|v| v.as_object()) {
         Some(h) => h,
         None => return false,
     };
 
-    // Check for auth headers (NOT x-requested-with — present on almost all XHRs regardless of auth)
+    // Check for auth headers
     for key in headers.keys() {
         let lower = key.to_lowercase();
         if lower == "authorization" || lower == "x-csrf-token" || lower == "x-xsrf-token" {
@@ -478,18 +565,10 @@ fn has_auth(data: &serde_json::Value, session_cookies: &std::collections::HashSe
         }
     }
 
-    // Check for session cookies — if any cookie name in the request matches a known session cookie
-    if let Some(cookie_str) = headers
-        .get("cookie")
-        .or_else(|| headers.get("Cookie"))
-        .and_then(|v| v.as_str())
-    {
-        for part in cookie_str.split(';') {
-            let name = part.trim().split('=').next().unwrap_or("").trim();
-            if session_cookies.contains(name) {
-                return true;
-            }
-        }
+    // Any Cookie header = authed. The browser only sends cookies for domains where
+    // the user has a session. This is the right heuristic for "can the AI replay this?"
+    if headers.contains_key("cookie") || headers.contains_key("Cookie") {
+        return true;
     }
 
     false
@@ -543,34 +622,48 @@ fn save_capture(app: &tauri::AppHandle, data: &serde_json::Value, session_ts: &s
 
     match app_name {
         Some(name) => {
+            // Auto-set current_app if not already set — this handles the case where
+            // navigate went to an unmapped domain (e.g. mail.google.com) but the API
+            // calls go to mapped domains (e.g. clients6.google.com → gmail).
+            {
+                let state = app.state::<AppState>();
+                let mut current = state.current_app.lock().unwrap();
+                if current.is_none() {
+                    *current = Some(name.clone());
+                }
+            }
             config::ensure_app_dirs(&name);
             append_capture(&name, data, session_ts);
             update_session(app, &name, &domain, data);
         }
         None => {
-            // If browser is open for a known app, auto-add this domain — but ONLY if authed.
-            // This prevents third-party domains (amp4mail.googleusercontent.com, etc.) from being added.
+            // Domain not in map. If browser is open for a known app, handle it.
             let current = app.state::<AppState>().current_app.lock().unwrap().clone();
 
             if let Some(ref name) = current {
-                // Only auto-add domain if the request carries auth
-                let state_ref = app.state::<AppState>();
-                let session_cookies = state_ref.session_cookie_names.lock().unwrap();
-                if !has_auth(data, &session_cookies) {
-                    // No auth = don't add domain, don't save capture, silently drop
-                    return;
-                }
-                drop(session_cookies); // release lock before further state access
+                if is_meta {
+                    // Meta entries (navigation, cookies) — save to current app without auto-adding domain
+                    config::ensure_app_dirs(name);
+                    append_capture(name, data, session_ts);
+                } else {
+                    // API call — only auto-add domain if authed
+                    let state_ref = app.state::<AppState>();
+                    let session_cookies = state_ref.session_cookie_names.lock().unwrap();
+                    if !has_auth(data, &session_cookies) {
+                        return;
+                    }
+                    drop(session_cookies);
 
-                // Auto-add domain to the current app
-                config::add_domain_to_app(name, &domain);
-                {
-                    let state = app.state::<AppState>();
-                    state.domain_map.lock().unwrap().insert(domain.clone(), name.clone());
+                    // Auto-add domain to the current app
+                    config::add_domain_to_app(name, &domain);
+                    {
+                        let state = app.state::<AppState>();
+                        state.domain_map.lock().unwrap().insert(domain.clone(), name.clone());
+                    }
+                    config::ensure_app_dirs(name);
+                    append_capture(name, data, session_ts);
+                    update_session(app, name, &domain, data);
                 }
-                config::ensure_app_dirs(name);
-                append_capture(name, data, session_ts);
-                update_session(app, name, &domain, data);
             } else {
                 // No active app — buffer and ask the user
                 let state = app.state::<AppState>();
