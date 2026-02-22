@@ -1,0 +1,26 @@
+{
+  "productName": "harharhar",
+  "version": "0.1.0",
+  "identifier": "com.harharhar.dev",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "explorer",
+        "title": "harharhar",
+        "width": 600,
+        "height": 900
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all"
+  }
+}

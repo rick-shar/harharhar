@@ -1,0 +1,65 @@
+[default]
+description = "Default permissions for all app commands"
+permissions = [
+  "allow-navigate",
+  "allow-resume-navigate",
+  "allow-set-user-agent",
+  "allow-get-config",
+  "allow-register-app",
+  "allow-add-domain",
+  "allow-get-apps",
+  "allow-save-capture-data",
+  "allow-get-cookies",
+  "allow-eval-js",
+  "allow-eval-callback",
+]
+
+[[permission]]
+identifier = "allow-navigate"
+description = "Allow navigate command"
+commands.allow = ["navigate"]
+
+[[permission]]
+identifier = "allow-resume-navigate"
+description = "Allow resume_navigate command"
+commands.allow = ["resume_navigate"]
+
+[[permission]]
+identifier = "allow-set-user-agent"
+description = "Allow set_user_agent command"
+commands.allow = ["set_user_agent"]
+
+[[permission]]
+identifier = "allow-get-config"
+description = "Allow get_config command"
+commands.allow = ["get_config"]
+
+[[permission]]
+identifier = "allow-register-app"
+description = "Allow register_app command"
+commands.allow = ["register_app"]
+
+[[permission]]
+identifier = "allow-add-domain"
+description = "Allow add_domain command"
+commands.allow = ["add_domain"]
+
+[[permission]]
+identifier = "allow-get-apps"
+description = "Allow get_apps command"
+commands.allow = ["get_apps"]
+
+[[permission]]
+identifier = "allow-get-cookies"
+description = "Allow get_cookies command"
+commands.allow = ["get_cookies"]
+
+[[permission]]
+identifier = "allow-eval-js"
+description = "Allow eval_js command"
+commands.allow = ["eval_js"]
+
+[[permission]]
+identifier = "allow-eval-callback"
+description = "Allow eval_callback command (IPC return channel for eval)"
+commands.allow = ["eval_callback"]

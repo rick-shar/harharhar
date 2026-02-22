@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Rust build
+src-tauri/target/
+
+# macOS
+.DS_Store
+
+# HAR files (may contain sensitive data)
+*.har
+
+# Local config (contains user-specific UA)
+# Note: ~/.harharhar/ is the data dir, not in this repo

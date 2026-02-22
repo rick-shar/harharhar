@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-save-capture-data"
+description = "Allow JS on external pages to send captured API data to Rust"
+commands.allow = ["save_capture_data"]

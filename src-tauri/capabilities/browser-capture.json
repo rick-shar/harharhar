@@ -1,0 +1,13 @@
+{
+  "identifier": "browser-capture",
+  "description": "Allow capture IPC from any external page",
+  "windows": ["browser"],
+  "remote": {
+    "urls": ["https://*", "http://*", "https://*:*", "http://*:*"]
+  },
+  "permissions": [
+    "core:default",
+    "allow-save-capture-data",
+    "allow-eval-callback"
+  ]
+}
