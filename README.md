@@ -8,6 +8,23 @@
                                     laughs in CLI
 ```
 
+---
+
+> **WARNING: This tool captures and stores real authentication tokens, cookies, and session data from your live browser sessions.**
+
+**This is not a toy.** harharhar is open-claw on steroids. It intercepts and persists live credentials from your actual logged-in browser sessions. If someone gets access to `~/.harharhar/`, they have your sessions. Full stop.
+
+- `~/.harharhar/` contains **live credentials** that grant full access to your accounts — Gmail, Slack, Jira, whatever you've browsed through it
+- Anyone with read access to that folder can **impersonate you** on any captured app, no passwords needed
+- **Do NOT use on shared machines** without understanding exactly what's being stored
+- **Do NOT commit `~/.harharhar/` to version control.** Ever. Add it to your global `.gitignore` now.
+- This is like giving your AI agent your house keys — make sure you trust where those keys are stored
+- Treat `~/.harharhar/` like your browser's cookie jar — because that's literally what it is
+
+**If you wouldn't leave your browser logged in and unlocked, don't leave `~/.harharhar/` unprotected.**
+
+---
+
 Your AI agent, operating Gmail, Jira, and Slack via raw API calls — no API tokens needed. harharhar is a browser that captures all API traffic as you use web apps, then hands the sessions, cookies, and auth tokens to your AI agent so it can operate those apps via `curl`.
 
 **The pitch:** "I can't get API token approval at work, but I'm already logged into these apps in my browser."
