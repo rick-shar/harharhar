@@ -199,6 +199,8 @@ fn main() {
                             if let Some(name) = entry.file_name().to_str() {
                                 println!("Generating endpoints for {}...", name);
                                 harharhar_lib::endpoints::generate_for_app(name);
+                                // Trim bodies in old captures (no active session, so trim all)
+                                harharhar_lib::cleanup::trim_captures_for_app(name, "");
                             }
                         }
                     }

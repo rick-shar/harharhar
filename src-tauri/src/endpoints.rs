@@ -1,7 +1,9 @@
+use crate::capture::should_skip_capture;
 use crate::config;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct EndpointCatalog {
@@ -302,10 +304,109 @@ pub fn generate_for_app(app_name: &str) {
     if let Ok(json) = serde_json::to_string_pretty(&auth) {
         let _ = fs::write(app_dir.join("auth.json"), json);
     }
+
+    // Generate examples.sh with curl commands for the top endpoints
+    generate_examples_sh(&app_dir, &catalog);
+}
+
+/// Generate examples.sh with working curl commands for the top endpoints.
+fn generate_examples_sh(app_dir: &std::path::Path, catalog: &EndpointCatalog) {
+    let session_path = app_dir.join("sessions").join("latest.json");
+    let session: config::SessionData = fs::read_to_string(&session_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    // Build Cookie header from session cookies
+    let cookie_header: String = session
+        .cookies
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    let examples_path = app_dir.join("examples.sh");
+    let mut file = match fs::File::create(&examples_path) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+
+    let _ = writeln!(file, "#!/usr/bin/env bash");
+    let _ = writeln!(file, "# Auto-generated curl examples from harharhar captures");
+    let _ = writeln!(file, "# Generated: {}", chrono::Utc::now().to_rfc3339());
+    let _ = writeln!(file);
+
+    let mut count = 0;
+    for ep in &catalog.endpoints {
+        if count >= 20 {
+            break;
+        }
+
+        // Get the first observed URL; skip if it matches noise patterns
+        let observed_url = match ep.observed_urls.first() {
+            Some(u) => u,
+            None => continue,
+        };
+
+        if should_skip_capture(observed_url) {
+            continue;
+        }
+
+        // Derive a human-readable comment from the pattern
+        let _ = writeln!(file, "# {}", ep.pattern);
+        let _ = writeln!(
+            file,
+            "# Seen: {} times, last: {}",
+            ep.times_seen, ep.last_seen
+        );
+
+        // Determine method — use the first one
+        let method = ep.methods.first().map(|s| s.as_str()).unwrap_or("GET");
+        let is_post = method == "POST" || method == "PUT" || method == "PATCH";
+
+        // Start building the curl command
+        let _ = write!(file, "curl");
+        if is_post {
+            let _ = write!(file, " -X {method}");
+        }
+        let _ = write!(file, " '{observed_url}'");
+
+        // Add Cookie header if we have cookies
+        if !cookie_header.is_empty() {
+            let _ = write!(file, " \\\n  -H 'Cookie: {cookie_header}'");
+        }
+
+        // Add auth headers from session
+        for (header_name, header_value) in &session.auth_headers {
+            let _ = write!(file, " \\\n  -H '{header_name}: {header_value}'");
+        }
+
+        // Add User-Agent
+        if !session.user_agent.is_empty() {
+            let _ = write!(file, " \\\n  -H 'User-Agent: {}'", session.user_agent);
+        }
+
+        // For POST-like methods, add placeholder body if JSON content type
+        if is_post {
+            let has_json_ct = ep
+                .request_content_types
+                .iter()
+                .any(|ct| ct.contains("json"));
+            if has_json_ct {
+                let _ = write!(file, " \\\n  -H 'Content-Type: application/json'");
+                let _ = write!(file, " \\\n  -d '{{}}'");
+            }
+        }
+
+        let _ = writeln!(file);
+        let _ = writeln!(file);
+
+        count += 1;
+    }
 }
 
 /// Normalize a URL path: replace numeric segments and UUIDs with {id}
-fn normalize_path(path: &str) -> String {
+pub fn normalize_path(path: &str) -> String {
     path.split('/')
         .map(|seg| {
             if seg.is_empty() {

@@ -133,6 +133,63 @@ const READ_UI_JS: &str = r#"(() => {
   return 'Page: ' + document.title + '\nURL: ' + location.href + '\n' + refs.length + ' elements\n---\n' + lines.join('\n');
 })()"#;
 
+// --- Noise filtering ---
+
+/// Known analytics/tracking domains that have zero value for AI agents learning APIs.
+const NOISE_DOMAINS: &[&str] = &[
+    "google-analytics.com",
+    "doubleclick.net",
+    "googletagmanager.com",
+    "facebook.com/tr",
+    "play.google.com/log",
+    "accounts.google.com/ListAccounts",
+    "apis.google.com/js/",
+    "www.gstatic.com",
+    "fonts.googleapis.com",
+    "fonts.gstatic.com",
+    "ssl.gstatic.com",
+];
+
+/// Static asset extensions that carry no API information.
+const NOISE_EXTENSIONS: &[&str] = &[
+    ".js", ".css", ".png", ".jpg", ".gif", ".svg", ".woff", ".woff2", ".ico",
+];
+
+/// URL path fragments indicating tracking/telemetry requests.
+const NOISE_PATH_PATTERNS: &[&str] = &[
+    "/log?", "/beacon", "/pixel", "/analytics", "/telemetry", "/collect?",
+];
+
+/// Returns true if the URL matches known noise patterns and should be skipped.
+pub fn should_skip_capture(url: &str) -> bool {
+    let url_lower = url.to_lowercase();
+
+    // Check noise domains / domain-path prefixes
+    for pattern in NOISE_DOMAINS {
+        if url_lower.contains(pattern) {
+            return true;
+        }
+    }
+
+    // Check static asset extensions — match against the path portion only
+    // (strip query string first so ".js?v=123" still matches ".js")
+    let path_part = url_lower.split('?').next().unwrap_or(&url_lower);
+    for ext in NOISE_EXTENSIONS {
+        if path_part.ends_with(ext) {
+            return true;
+        }
+    }
+
+    // Check tracking/telemetry path patterns
+    for pattern in NOISE_PATH_PATTERNS {
+        if url_lower.contains(pattern) {
+            return true;
+        }
+    }
+
+    false
+}
+
 // --- Process a single capture entry (called from Tauri IPC command) ---
 
 pub fn process_single(app: &tauri::AppHandle, data: &serde_json::Value, session_ts: &str) {
@@ -140,7 +197,7 @@ pub fn process_single(app: &tauri::AppHandle, data: &serde_json::Value, session_
 
     let count = CAPTURE_COUNT.fetch_add(1, Ordering::Relaxed);
     if count > 0 && count % 50 == 0 {
-        generate_all_endpoints();
+        generate_all_endpoints(session_ts);
     }
 }
 
@@ -310,7 +367,9 @@ fn handle_command(app: &tauri::AppHandle, body: &str) -> String {
         }
 
         "generate_endpoints" => {
-            generate_all_endpoints();
+            let state = app.state::<AppState>();
+            let ts = state.session_ts.clone();
+            generate_all_endpoints(&ts);
             r#"{"ok":true}"#.to_string()
         }
 
@@ -331,9 +390,10 @@ fn get_browser_cookies(app: &tauri::AppHandle, _url: &str) -> String {
     exec_js_with_result(app, "document.cookie")
 }
 
-fn generate_all_endpoints() {
+fn generate_all_endpoints(session_ts: &str) {
     for app_name in config::list_apps() {
         endpoints::generate_for_app(&app_name);
+        crate::cleanup::trim_captures_for_app(&app_name, session_ts);
     }
 }
 
@@ -378,10 +438,21 @@ fn log_ui_action(app: &tauri::AppHandle, action: &str, ref_id: u64, value: Optio
 // --- Capture saving ---
 
 fn save_capture(app: &tauri::AppHandle, data: &serde_json::Value, session_ts: &str) {
+    // Skip xhr-start entries — always followed by the full xhr completion entry
+    let entry_type = data.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if entry_type == "xhr-start" {
+        return;
+    }
+
     let url_str = match data.get("url").and_then(|v| v.as_str()) {
         Some(u) => u,
         None => return,
     };
+
+    // Skip noise URLs, but always let ui-action entries through
+    if entry_type != "ui-action" && should_skip_capture(url_str) {
+        return;
+    }
 
     let domain = match url::Url::parse(url_str) {
         Ok(u) => match u.host_str() {
@@ -449,6 +520,21 @@ pub fn flush_unmapped(app: &tauri::AppHandle, domain: &str, app_name: &str, sess
 }
 
 fn append_capture(app_name: &str, data: &serde_json::Value, session_ts: &str) {
+    // Skip xhr-start entries — redundant with the full xhr completion
+    let entry_type = data.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if entry_type == "xhr-start" {
+        return;
+    }
+
+    // Skip noise URLs, but always let ui-action entries through
+    if entry_type != "ui-action" {
+        if let Some(url_str) = data.get("url").and_then(|v| v.as_str()) {
+            if should_skip_capture(url_str) {
+                return;
+            }
+        }
+    }
+
     let captures_dir = config::data_dir()
         .join("apps")
         .join(app_name)
