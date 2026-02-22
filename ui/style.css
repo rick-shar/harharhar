@@ -44,6 +44,49 @@ button:hover { background: #c73e54; }
 #clear-btn { background: #533483; }
 #clear-btn:hover { background: #3e2763; }
 
+/* App selector */
+#app-selector {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  background: #16213e;
+  border-bottom: 1px solid #0f3460;
+}
+
+.app-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 14px;
+  background: #0f3460;
+  border: 1px solid #533483;
+  color: #e0e0e0;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+.app-btn:hover {
+  border-color: #e94560;
+  background: #1a1a2e;
+}
+
+.app-btn-name {
+  font-weight: bold;
+  font-size: 12px;
+}
+
+.app-btn-domain {
+  font-size: 9px;
+  color: #666;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 #stats {
   padding: 4px 8px;
   font-size: 10px;

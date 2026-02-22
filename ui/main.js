@@ -8,10 +8,48 @@ const feed = document.getElementById('feed');
 const stats = document.getElementById('stats');
 const alerts = document.getElementById('alerts');
 
+const appSelector = document.getElementById('app-selector');
+
 let requests = [];
 let pendingDomains = new Set(); // domains we've already prompted for
 let domainQueue = []; // queued unknown domains waiting for modal
 let modalActive = false; // is a naming modal currently showing
+
+// --- App Selector ---
+async function loadAppSelector() {
+  try {
+    const apps = await invoke('get_app_details');
+    appSelector.innerHTML = '';
+    if (!apps || apps.length === 0) {
+      appSelector.style.display = 'none';
+      return;
+    }
+    appSelector.style.display = 'flex';
+    apps.forEach(app => {
+      const primaryDomain = app.domains && app.domains.length > 0 ? app.domains[0] : '';
+      const btn = document.createElement('button');
+      btn.className = 'app-btn';
+      btn.innerHTML = `<span class="app-btn-name">${esc(app.name)}</span>` +
+        (primaryDomain ? `<span class="app-btn-domain">${esc(primaryDomain)}</span>` : '');
+      btn.title = primaryDomain;
+      btn.addEventListener('click', () => {
+        if (primaryDomain) {
+          urlInput.value = primaryDomain;
+          invoke('navigate', { url: primaryDomain });
+        }
+      });
+      appSelector.appendChild(btn);
+    });
+  } catch (e) {
+    appSelector.style.display = 'none';
+  }
+}
+
+// Load apps on startup
+loadAppSelector();
+
+// Refresh app selector when a new app is registered
+listen('config-updated', () => loadAppSelector());
 
 // --- Navigate ---
 function go() {
@@ -71,6 +109,7 @@ listen('name-app-before-navigate', event => {
   showNamingModal(domain, suggested, async (name) => {
     await invoke('register_app', { name, domain });
     showNotice(`App "${name}" created for ${domain}`);
+    loadAppSelector();
     await invoke('resume_navigate');
   });
 });
@@ -101,6 +140,7 @@ async function processNextDomain() {
         await invoke('add_domain', { name: appName, domain: d });
       }
       showNotice(`Added ${domains.length} domain(s) to "${appName}"`);
+      loadAppSelector();
       modalActive = false;
       processNextDomain();
     });
@@ -116,6 +156,7 @@ async function processNextDomain() {
         await invoke('add_domain', { name, domain: d });
       }
       showNotice(`App "${name}" created with ${domains.length} domain(s)`);
+      loadAppSelector();
       modalActive = false;
       processNextDomain();
     });

@@ -97,7 +97,7 @@ pub fn open_browser(app: &tauri::AppHandle, url: url::Url) -> Result<(), String>
         wv.eval(&js).map_err(|e| e.to_string())?;
     } else {
         let inject = include_str!("../../inject/intercept.js");
-        tauri::WebviewWindowBuilder::new(
+        let mut builder = tauri::WebviewWindowBuilder::new(
             app,
             "browser",
             tauri::WebviewUrl::External(url),
@@ -105,9 +105,23 @@ pub fn open_browser(app: &tauri::AppHandle, url: url::Url) -> Result<(), String>
         .title("harharhar browser")
         .inner_size(1000.0, 800.0)
         .user_agent(&ua)
-        .initialization_script(inject)
-        .build()
-        .map_err(|e| e.to_string())?;
+        .initialization_script(inject);
+
+        // Position the browser window to the right of the explorer window
+        if let Some(explorer) = app.get_webview_window("explorer") {
+            if let (Ok(pos), Ok(size), Ok(scale)) = (
+                explorer.outer_position(),
+                explorer.outer_size(),
+                explorer.scale_factor(),
+            ) {
+                let gap = 16.0; // logical pixels
+                let x = (pos.x as f64 / scale) + (size.width as f64 / scale) + gap;
+                let y = pos.y as f64 / scale;
+                builder = builder.position(x, y);
+            }
+        }
+
+        builder.build().map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -158,6 +172,20 @@ async fn register_app(app: tauri::AppHandle, name: String, domain: String) -> Re
 #[tauri::command]
 async fn get_apps() -> Result<Vec<String>, String> {
     Ok(config::list_apps())
+}
+
+#[tauri::command]
+async fn get_app_details() -> Result<Vec<serde_json::Value>, String> {
+    let details = config::list_app_details();
+    Ok(details
+        .into_iter()
+        .map(|(name, domains)| {
+            serde_json::json!({
+                "name": name,
+                "domains": domains
+            })
+        })
+        .collect())
 }
 
 /// IPC callback from browser JS — resolves a pending eval_js_with_result call.
@@ -287,6 +315,7 @@ pub fn run() {
             register_app,
             add_domain,
             get_apps,
+            get_app_details,
             get_cookies,
             eval_js,
             eval_callback,

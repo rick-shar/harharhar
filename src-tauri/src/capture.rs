@@ -250,30 +250,36 @@ fn handle_command(app: &tauri::AppHandle, body: &str) -> String {
 
         "click_ref" => {
             let ref_id = cmd.get("ref").and_then(|v| v.as_u64()).unwrap_or(0);
-            exec_js_with_result(app, &format!(
-                "(() => {{ const refs = window.__hh_refs || []; const el = refs[{}]; if(!el) return 'ref not found'; el.scrollIntoView({{block:'center'}}); el.click(); return 'clicked'; }})()",
+            let result = exec_js_with_result(app, &format!(
+                "(() => {{ const refs = window.__hh_refs || []; const el = refs[{}]; if(!el) return JSON.stringify({{ok:false,err:'ref not found'}}); var role = el.getAttribute('role') || el.tagName.toLowerCase(); var label = (el.getAttribute('aria-label') || el.innerText || '').substring(0,80).trim(); el.scrollIntoView({{block:'center'}}); el.click(); return JSON.stringify({{ok:true,role:role,label:label,url:location.href}}); }})()",
                 ref_id
-            ))
+            ));
+            log_ui_action(app, "click_ref", ref_id, None, &result);
+            result
         }
 
         "type_ref" => {
             let ref_id = cmd.get("ref").and_then(|v| v.as_u64()).unwrap_or(0);
             let value = cmd.get("value").and_then(|v| v.as_str()).unwrap_or("");
-            exec_js_with_result(app, &format!(
-                "(() => {{ const refs = window.__hh_refs || []; const el = refs[{}]; if(!el) return 'ref not found'; el.focus(); el.value = {}; el.dispatchEvent(new Event('input', {{bubbles:true}})); el.dispatchEvent(new Event('change', {{bubbles:true}})); return 'typed'; }})()",
+            let result = exec_js_with_result(app, &format!(
+                "(() => {{ const refs = window.__hh_refs || []; const el = refs[{}]; if(!el) return JSON.stringify({{ok:false,err:'ref not found'}}); var role = el.getAttribute('role') || el.tagName.toLowerCase(); var label = (el.getAttribute('aria-label') || el.placeholder || '').substring(0,80).trim(); el.focus(); el.value = {}; el.dispatchEvent(new Event('input', {{bubbles:true}})); el.dispatchEvent(new Event('change', {{bubbles:true}})); return JSON.stringify({{ok:true,role:role,label:label,url:location.href}}); }})()",
                 ref_id,
                 serde_json::to_string(value).unwrap()
-            ))
+            ));
+            log_ui_action(app, "type_ref", ref_id, Some(value), &result);
+            result
         }
 
         "select_ref" => {
             let ref_id = cmd.get("ref").and_then(|v| v.as_u64()).unwrap_or(0);
             let value = cmd.get("value").and_then(|v| v.as_str()).unwrap_or("");
-            exec_js_with_result(app, &format!(
-                "(() => {{ const refs = window.__hh_refs || []; const el = refs[{}]; if(!el) return 'ref not found'; el.value = {}; el.dispatchEvent(new Event('change', {{bubbles:true}})); return 'selected ' + el.value; }})()",
+            let result = exec_js_with_result(app, &format!(
+                "(() => {{ const refs = window.__hh_refs || []; const el = refs[{}]; if(!el) return JSON.stringify({{ok:false,err:'ref not found'}}); var role = el.getAttribute('role') || el.tagName.toLowerCase(); var label = (el.getAttribute('aria-label') || '').substring(0,80).trim(); el.value = {}; el.dispatchEvent(new Event('change', {{bubbles:true}})); return JSON.stringify({{ok:true,role:role,label:label,selected:el.value,url:location.href}}); }})()",
                 ref_id,
                 serde_json::to_string(value).unwrap()
-            ))
+            ));
+            log_ui_action(app, "select_ref", ref_id, Some(value), &result);
+            result
         }
 
         "get_cookies" => {
@@ -329,6 +335,44 @@ fn generate_all_endpoints() {
     for app_name in config::list_apps() {
         endpoints::generate_for_app(&app_name);
     }
+}
+
+/// Log a UI interaction to the active app's capture JSONL.
+/// This correlates UI actions with the API calls they trigger.
+fn log_ui_action(app: &tauri::AppHandle, action: &str, ref_id: u64, value: Option<&str>, raw_result: &str) {
+    let state = app.state::<AppState>();
+    let current_app = state.current_app.lock().unwrap().clone();
+    let app_name = match current_app {
+        Some(name) => name,
+        None => return,
+    };
+    let session_ts = state.session_ts.clone();
+
+    // Parse the JS result to extract role/label
+    let js_info: serde_json::Value = serde_json::from_str(
+        // The raw_result is {"ok":true,"result":"..."} — extract the inner result string
+        &serde_json::from_str::<serde_json::Value>(raw_result)
+            .ok()
+            .and_then(|v| v.get("result").and_then(|r| r.as_str()).map(|s| s.to_string()))
+            .unwrap_or_default(),
+    )
+    .unwrap_or_default();
+
+    let mut entry = serde_json::json!({
+        "type": "ui-action",
+        "action": action,
+        "ref": ref_id,
+        "role": js_info.get("role").and_then(|v| v.as_str()).unwrap_or(""),
+        "label": js_info.get("label").and_then(|v| v.as_str()).unwrap_or(""),
+        "url": js_info.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    });
+
+    if let Some(val) = value {
+        entry.as_object_mut().unwrap().insert("value".to_string(), serde_json::Value::String(val.to_string()));
+    }
+
+    append_capture(&app_name, &entry, &session_ts);
 }
 
 // --- Capture saving ---

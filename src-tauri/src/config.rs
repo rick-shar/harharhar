@@ -115,6 +115,29 @@ pub fn find_app_for_domain(domain: &str) -> Option<String> {
     None
 }
 
+/// List all known apps with their domains
+pub fn list_app_details() -> Vec<(String, Vec<String>)> {
+    let apps_dir = data_dir().join("apps");
+    fs::read_dir(&apps_dir)
+        .ok()
+        .map(|entries| {
+            let mut result: Vec<(String, Vec<String>)> = entries
+                .flatten()
+                .filter(|e| e.path().is_dir())
+                .filter_map(|e| {
+                    let name = e.file_name().to_str()?.to_string();
+                    let config_path = e.path().join("config.json");
+                    let contents = fs::read_to_string(&config_path).ok()?;
+                    let app_cfg: AppConfig = serde_json::from_str(&contents).ok()?;
+                    Some((name, app_cfg.domains))
+                })
+                .collect();
+            result.sort_by(|a, b| a.0.cmp(&b.0));
+            result
+        })
+        .unwrap_or_default()
+}
+
 /// List all known app names
 pub fn list_apps() -> Vec<String> {
     let apps_dir = data_dir().join("apps");

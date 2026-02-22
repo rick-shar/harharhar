@@ -8,6 +8,7 @@ permissions = [
   "allow-register-app",
   "allow-add-domain",
   "allow-get-apps",
+  "allow-get-app-details",
   "allow-save-capture-data",
   "allow-get-cookies",
   "allow-eval-js",
@@ -48,6 +49,11 @@ commands.allow = ["add_domain"]
 identifier = "allow-get-apps"
 description = "Allow get_apps command"
 commands.allow = ["get_apps"]
+
+[[permission]]
+identifier = "allow-get-app-details"
+description = "Allow get_app_details command"
+commands.allow = ["get_app_details"]
 
 [[permission]]
 identifier = "allow-get-cookies"
